@@ -6,37 +6,51 @@
 #include <string>
 #include <vector>
 
+
+
+
+enum Flags : uint8_t {
+    isStatic   = 1 << 0, // for functions
+    isExtern   = 1 << 1, // for functions and variables
+    isTypedef  = 1 << 2, // for structs, type etc.
+    isVolitile = 1 << 3, // for type
+    isSigned   = 1 << 4, // for type
+    isConst    = 1 << 5, // for type
+};
+
+struct Type {
+    std::string baseType;
+    uint32_t pointerLevel = 0; // number of *
+    uint64_t flags        = 0;
+};
+
+
 struct Parameter {
-    std::string dataType;
+    Type dataType;
     std::optional<std::string> param_name;
 
     explicit Parameter(
-        std::string type,
+        Type type,
         std::optional<std::string> name = std::nullopt)
         : dataType(std::move(type)),
           param_name(std::move(name)) {}
 };
 
-enum Flags : uint8_t {
-    isStatic  = 1 << 0, // for functions
-    isExtern  = 1 << 1, // for functions and variables
-    isTypedef = 1 << 2, // for structs, types etc.
-};
-
 struct Function {
     std::string name;
     std::vector<Parameter> params;
-    std::string returnType;
+    Type returnType;
     uint8_t flags = 0;
 
     Function(
         std::string name,
         std::vector<Parameter> params,
-        std::string returnType)
+        Type returnType)
         : name(std::move(name)),
           params(std::move(params)),
           returnType(std::move(returnType)) {}
 };
+
 
 struct EnumField {
     std::string name;
@@ -52,7 +66,6 @@ struct EnumField {
 struct Enum {
     std::string name;
     std::vector<EnumField> fields;
-
     Enum(
         std::string name,
         std::vector<EnumField> fields)
@@ -61,21 +74,21 @@ struct Enum {
 };
 
 struct ExternVariable {
-    std::string type;
+    Type type;
     std::string name;
 
     ExternVariable(
-        std::string type,
+        Type type,
         std::string name)
         : type(std::move(type)),
           name(std::move(name)) {}
 };
 
 struct StructField {
-    std::string type;
+    Type type;
     std::string name;
     StructField(
-        std::string type,
+        Type type,
         std::string name)
         : type(std::move(type)),
           name(std::move(name)) {}
@@ -93,11 +106,11 @@ struct Struct {
 };
 
 struct VariableDefinition {
-    std::string dataType;
+    Type dataType;
     std::string name;
     std::optional<std::string> value;
     VariableDefinition(
-        std::string dataType,
+        Type dataType,
         std::string name,
         std::optional<std::string> value = std::nullopt)
         : dataType(std::move(dataType)),
@@ -108,19 +121,19 @@ struct VariableDefinition {
 
 
 struct Typedef{
-    std::string underlyingType;
+    Type underlyingType;
     std::string alias;
     
-    Typedef(   std::string underlyingType,
+    Typedef(   Type underlyingType,
                std::string alias
             ): underlyingType(std::move(underlyingType)),
                alias(std::move(alias)){}
 };
 struct UnionField{
     std::string name;
-    std::string type;
+    Type type;
     UnionField(  std::string name,
-                 std::string type
+                 Type type
               ): name(std::move(name)),
                  type(std::move(type))
     {}
@@ -164,6 +177,24 @@ enum class ForwardKind {
 struct ForwardDeclaration {
     ForwardKind kind;
     std::string name;
+};
+
+
+
+struct FunctionPointer {
+    Type returnType;
+    std::string name;
+    std::vector<Parameter> params;
+};
+
+struct ArrayInfo {
+    Type elementType;
+    std::string name;
+    std::optional<size_t> size;
+};
+
+struct Comment {
+    std::string text;
 };
 
 
