@@ -163,9 +163,15 @@ struct Macro {
     {}
 };
 
-struct IncludeStatements{
+struct IncludeStatement{
     bool system;
     std::string path;
+    IncludeStatement(
+            bool system,
+            std::string path
+            ) : system(system),
+                path(std::move(path))
+    {}
 };
 
 enum class ForwardKind {
@@ -197,5 +203,19 @@ struct Comment {
     std::string text;
 };
 
+#include <variant>
+
+using Declaration =
+    std::variant<
+        Function,
+        Struct,
+        Union,
+        Enum,
+        Typedef,
+        Macro,
+        IncludeStatement,
+        ExternVariable,
+        VariableDefinition,
+        ForwardDeclaration>;
 
 #endif // DEFINITIONS_H
