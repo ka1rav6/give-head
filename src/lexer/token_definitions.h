@@ -2,12 +2,13 @@
 #define DEFINITIONS_H
 
 #include <cstdint>
+#include <variant>
 #include <optional>
 #include <string>
 #include <vector>
 
 
-
+namespace Lexer{
 
 enum Flags : uint8_t {
     isStatic   = 1 << 0, // for functions
@@ -203,7 +204,6 @@ struct Comment {
     std::string text;
 };
 
-#include <variant>
 
 using Declaration =
     std::variant<
@@ -218,4 +218,5 @@ using Declaration =
         VariableDefinition,
         ForwardDeclaration>;
 
+}
 #endif // DEFINITIONS_H
