@@ -215,53 +215,135 @@ using Declaration =
         ForwardDeclaration
     >;
 
+// ------ Punctuation / Operators ------
 enum class Symbols : uint8_t {
     // ------- Brackets -------
     LPAREN,                     // (
     RPAREN,                     // )
-    LSQUARE,                    // [            
-    RSQUARE,                    // ]             
-    LCURLY,                     // {         
-    RCURLY,                     // }        
+    LSQUARE,                    // [
+    RSQUARE,                    // ]
+    LCURLY,                     // {
+    RCURLY,                     // }
     // ------- Comments --------
-    START_MULTICOMMENT,         // /*                     
-    END_MULTICOMMENT,           // */                     
-    SINGLE_COMMENT,             // //                 
+    START_MULTICOMMENT,         // /*
+    END_MULTICOMMENT,           // */
+    SINGLE_COMMENT,             // //
     // ------ Arithmetic --------
-    PLUS,                       // +         
-    PLUSPLUS,                   // ++             
-    MINUS,                      // -         
-    MINUSMINUS,                 // --             
-    ASTRISK,                    // *             
-    DIVIDE,                     // /         
-    EQ,                         // =     
-    EQ_EQ,                      // ==         
-    NE,                         // !=     
-    LT,                         // <     
-    GT,                         // >     
-    GE,                         // >=     
-    LE,                         // <=   
-    AND,                        // &         
-    ANDAND,                     // &&         
-    OR,                         // |     
-    OROR,                       // ||         
-    LOG_NOT,                    // !             
-    BIN_NOT,                    // ~             
-    PTR_NOTATION,               // ->                 
+    PLUS,                       // +
+    PLUSPLUS,                   // ++
+    MINUS,                      // -
+    MINUSMINUS,                 // --
+    ASTRISK,                    // *
+    DIVIDE,                     // /
+    EQ,                         // =
+    EQ_EQ,                      // ==
+    NE,                         // !=
+    LT,                         // <
+    GT,                         // >
+    GE,                         // >=
+    LE,                         // <=
+    AND,                        // &
+    ANDAND,                     // &&
+    OR,                         // |
+    OROR,                       // ||
+    LOG_NOT,                    // !
+    BIN_NOT,                    // ~
+    PTR_NOTATION,               // ->
     // ------ Punctuation -------
-    SINGLE_QUOTE,               // '                 
-    DOUBLE_QUOTE,               // "                 
-    COMMA,                      // ,         
-    QSN_MARK,                   // ?             
-    NEXT_LINE,                  // \n             
-    EOF_,                       // EOF         
-    SEMICOLON,                  // ;             
-    COLON,                      // :         
+    SINGLE_QUOTE,               // '
+    DOUBLE_QUOTE,               // "
+    COMMA,                      // ,
+    QSN_MARK,                   // ?
+    NEXT_LINE,                  // \n
+    EOF_,                       // EOF
+    SEMICOLON,                  // ;
+    COLON,                      // :
+    DOT,                        // .
+    ELLIPSIS,                   // ...
+    HASH,                       // #
+    AT,                         // @
+};
+
+// ------ Token Kinds ------
+enum class TokenKind : uint8_t {
+    // literals
+    IDENTIFIER,
+    KEYWORD,
+    INT_LITERAL,
+    FLOAT_LITERAL,
+    STRING_LITERAL,
+    CHAR_LITERAL,
+    HEX_LITERAL,
+    OCTAL_LITERAL,
+
+    // single character tokens
+    LPAREN,                     // (
+    RPAREN,                     // )
+    LSQUARE,                    // [
+    RSQUARE,                    // ]
+    LCURLY,                     // {
+    RCURLY,                     // }
+    SEMICOLON,                  // ;
+    COLON,                      // :
+    COMMA,                      // ,
+    DOT,                        // .
+    TILDE,                      // ~
+    QUESTION,                   // ?
+
+    // operators
+    PLUS,                       // +
+    MINUS,                      // -
+    STAR,                       // *
+    SLASH,                      // /
+    PERCENT,                    // %
+    AMPERSAND,                  // &
+    PIPE,                       // |
+    CARET,                      // ^
+    BANG,                       // !
+    EQUALS,                     // =
+
+    // comparison
+    LT,                         // <
+    GT,                         // >
+
+    // two character operators
+    PLUS_PLUS,                  // ++
+    MINUS_MINUS,                // --
+    ARROW,                      // ->
+    EQ_EQ,                      // ==
+    BANG_EQ,                    // !=
+    LT_EQ,                      // <=
+    GT_EQ,                      // >=
+    AMP_AMP,                    // &&
+    PIPE_PIPE,                  // ||
+    LT_LT,                      // <<
+    GT_GT,                      // >>
+    AMP_EQ,                     // &=
+    PIPE_EQ,                    // |=
+    CARET_EQ,                   // ^=
+    PLUS_EQ,                    // +=
+    MINUS_EQ,                   // -=
+    STAR_EQ,                    // *=
+    SLASH_EQ,                   // /=
+    PERCENT_EQ,                 // %=
+
+    // three character operators
+    ELLIPSIS,                   // ...
+
+    // preprocessor
+    PREPROCESSOR,               // #include, #define, etc
+
+    // comments
+    LINE_COMMENT,               // // ...
+    BLOCK_COMMENT,              // /* ... */
+
+    // misc
+    NEWLINE,
+    UNKNOWN,
 };
 
 struct Token {
-    std::optional<Declaration> decl;
-    std::optional<Symbols> symbol;
+    TokenKind kind;
     std::string raw;
     size_t col_num ;
     size_t line_num;

@@ -1,6 +1,8 @@
 #include "lexer.h"
+#include "keywords.h"
 #include <iostream>
 #include <fstream>
+#include <cctype>
 
 namespace Lexer{
 
@@ -18,99 +20,271 @@ std::vector<std::string> read_file(const std::string& fileName) {
     return lines;
 }
 
-static std::vector<Token> tokenise_include(
-    const std::string& line,
-    size_t line_num,
-    size_t* i
-) {
-    while (line[*i] == ' ') (*i)++;
-    bool system = false;
-    if (line[*i] == '<') 
-        system = true;
-    (*i)++;
-    std::string path = "";
-    if (system) {
-        while (*i < line.size() && line[*i] != '>')
-            path += line[(*i)++];
-
-        if (*i == line.size())
-            std::cerr << "[ERROR] include doesnt end. line : " << line << "\nline number: " << line_num << std::endl;
-        return {Token{IncludeStatement(true, path), std::nullopt, line, (size_t)-1, line_num}};
+static void skip_string(const std::string& line, size_t* i, char delim) {
+    while (*i < line.size() && line[*i] != delim) {
+        if (line[*i] == '\\')
+            (*i)++;
+        (*i)++;
     }
-    if (line[*i] == '\"') {
-        while (*i < line.size() && line[*i] != '"')
-            path += line[(*i)++];
-        if (*i == line.size())
-            std::cerr << "[ERROR] include doesn't end. line : " << line << "\nline number: " << line_num << std::endl;
-        return {Token{IncludeStatement(false, path), std::nullopt, line, (size_t)-1, line_num}};
-    }
-    std::cerr << "[ERROR] Illegal include statement. Line : " << line << "\nline number : " << line_num << std::endl;
-    return {Token{IncludeStatement(false, ""), std::nullopt, line, (size_t)-1, line_num}};
+    if (*i < line.size())
+        (*i)++;
 }
 
-static std::vector<Token> tokenise_define(
-    const std::string& line,
-    size_t line_num,
-    size_t* i
-) {
-    std::string name = "";
-    while (line[*i] == ' ') 
-        ++(*i);
-    while (line[*i] != ' ')
-        name += line[(*i)++];
-
-    while (line[*i] == ' ')
-        ++(*i);
-    std::string params = "";
-    std::string body = "";
-
-    if (line[*i] == '(') {
-        while (*i < line.size() && line[*i] != ')')
-            params += line[(*i)++];
-        if (*i == line.size())
-            std::cerr << "Macro parameters missing a parenthesis. Line : " << line << "\nLine number : " << line_num << std::endl;
-        ++(*i);
-    }
-    while (*i != line.size()) 
-        body += line[(*i)++];
-
-    if (params == "")
-        return {Token{Macro(name, body), std::nullopt, line, (size_t)-1, line_num}};
-    return {Token{Macro(name, body, params), std::nullopt, line, (size_t)-1, line_num}};
-}
-
-static std::vector<Token> tokenise_unknown_directive(
-    const std::string& line,
-    size_t line_num
-) {
-    std::cerr << "Preprocessor directive not defined!\nLine : " << line << "\nLine number : " << line_num << std::endl;
-    return {};
-}
-
-static std::vector<Token> handle_preprocessor_directives(
-    const std::string& line,
-    size_t line_num,
-    size_t* i
-) {
-    std::string directive = "";
-    while (*i < line.size() && line[*i] != ' ')
-        directive += line[(*i)++];
-
-    if (directive == "include") 
-        return tokenise_include(line, line_num, i);
-    if (directive == "define")
-        return tokenise_define(line, line_num, i);
-    return tokenise_unknown_directive(line, line_num);
+static Token make_token(TokenKind kind, const std::string& line, size_t start, size_t end, size_t line_num) {
+    return Token{kind, line.substr(start, end - start), start + 1, line_num};
 }
 
 std::vector<Token> tokenise_line(const std::string& line, size_t line_num) {
-    if (line.size() == 0)
-        return {};
-    if (line.at(0) == '#'){
-        size_t i = 1;
-        return handle_preprocessor_directives(line, line_num, &i);
+    std::vector<Token> tokens;
+    size_t i = 0;
+    size_t len = line.size();
+
+    while (i < len) {
+        // skip whitespace (but not newlines)
+        if (line[i] == ' ' || line[i] == '\t' || line[i] == '\r') {
+            i++;
+            continue;
+        }
+
+        size_t start = i;
+
+        // ---- preprocessor directive ----
+        if (line[i] == '#') {
+            i++;
+            while (i < len && line[i] != '\n')
+                i++;
+            tokens.push_back(make_token(TokenKind::PREPROCESSOR, line, start, i, line_num));
+            continue;
+        }
+
+        // ---- single line comment ----
+        if (line[i] == '/' && i + 1 < len && line[i + 1] == '/') {
+            i = len;
+            tokens.push_back(make_token(TokenKind::LINE_COMMENT, line, start, i, line_num));
+            continue;
+        }
+
+        // ---- block comment (single line only) ----
+        if (line[i] == '/' && i + 1 < len && line[i + 1] == '*') {
+            i += 2;
+            while (i < len - 1 && !(line[i] == '*' && line[i + 1] == '/'))
+                i++;
+            if (i < len - 1)
+                i += 2;
+            tokens.push_back(make_token(TokenKind::BLOCK_COMMENT, line, start, i, line_num));
+            continue;
+        }
+
+        // ---- string literal ----
+        if (line[i] == '"') {
+            i++;
+            skip_string(line, &i, '"');
+            tokens.push_back(make_token(TokenKind::STRING_LITERAL, line, start, i, line_num));
+            continue;
+        }
+
+        // ---- char literal ----
+        if (line[i] == '\'') {
+            i++;
+            skip_string(line, &i, '\'');
+            tokens.push_back(make_token(TokenKind::CHAR_LITERAL, line, start, i, line_num));
+            continue;
+        }
+
+        // ---- numbers (hex, octal, float, int) ----
+        if (std::isdigit(line[i]) || (line[i] == '.' && i + 1 < len && std::isdigit(line[i + 1]))) {
+            TokenKind kind = TokenKind::INT_LITERAL;
+
+            if (line[i] == '0' && i + 1 < len && (line[i + 1] == 'x' || line[i + 1] == 'X')) {
+                kind = TokenKind::HEX_LITERAL;
+                i += 2;
+                while (i < len && std::isxdigit(line[i]))
+                    i++;
+            } else if (line[i] == '0' && i + 1 < len && std::isdigit(line[i + 1])) {
+                kind = TokenKind::OCTAL_LITERAL;
+                while (i < len && std::isdigit(line[i]))
+                    i++;
+            } else {
+                while (i < len && std::isdigit(line[i]))
+                    i++;
+                if (i < len && line[i] == '.') {
+                    kind = TokenKind::FLOAT_LITERAL;
+                    i++;
+                    while (i < len && std::isdigit(line[i]))
+                        i++;
+                }
+                if (i < len && (line[i] == 'e' || line[i] == 'E')) {
+                    kind = TokenKind::FLOAT_LITERAL;
+                    i++;
+                    if (i < len && (line[i] == '+' || line[i] == '-'))
+                        i++;
+                    while (i < len && std::isdigit(line[i]))
+                        i++;
+                }
+            }
+
+            // consume type suffixes (u, l, ll, f, etc)
+            while (i < len && (line[i] == 'u' || line[i] == 'U' ||
+                               line[i] == 'l' || line[i] == 'L' ||
+                               line[i] == 'f' || line[i] == 'F'))
+                i++;
+
+            tokens.push_back(make_token(kind, line, start, i, line_num));
+            continue;
+        }
+
+        // ---- identifiers / keywords ----
+        if (std::isalpha(line[i]) || line[i] == '_') {
+            while (i < len && (std::isalnum(line[i]) || line[i] == '_'))
+                i++;
+
+            std::string_view word(line.c_str() + start, i - start);
+            TokenKind kind = is_keyword(word) ? TokenKind::KEYWORD : TokenKind::IDENTIFIER;
+            tokens.push_back(make_token(kind, line, start, i, line_num));
+            continue;
+        }
+
+        // ---- two/three character operators ----
+        if (line[i] == '-' && i + 1 < len && line[i + 1] == '>') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::ARROW, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '+' && i + 1 < len && line[i + 1] == '+') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::PLUS_PLUS, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '-' && i + 1 < len && line[i + 1] == '-') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::MINUS_MINUS, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '=' && i + 1 < len && line[i + 1] == '=') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::EQ_EQ, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '!' && i + 1 < len && line[i + 1] == '=') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::BANG_EQ, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '<' && i + 1 < len && line[i + 1] == '=') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::LT_EQ, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '>' && i + 1 < len && line[i + 1] == '=') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::GT_EQ, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '&' && i + 1 < len && line[i + 1] == '&') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::AMP_AMP, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '|' && i + 1 < len && line[i + 1] == '|') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::PIPE_PIPE, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '<' && i + 1 < len && line[i + 1] == '<') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::LT_LT, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '>' && i + 1 < len && line[i + 1] == '>') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::GT_GT, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '&' && i + 1 < len && line[i + 1] == '=') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::AMP_EQ, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '|' && i + 1 < len && line[i + 1] == '=') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::PIPE_EQ, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '^' && i + 1 < len && line[i + 1] == '=') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::CARET_EQ, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '+' && i + 1 < len && line[i + 1] == '=') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::PLUS_EQ, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '-' && i + 1 < len && line[i + 1] == '=') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::MINUS_EQ, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '*' && i + 1 < len && line[i + 1] == '=') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::STAR_EQ, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '/' && i + 1 < len && line[i + 1] == '=') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::SLASH_EQ, line, start, i, line_num));
+            continue;
+        }
+        if (line[i] == '%' && i + 1 < len && line[i + 1] == '=') {
+            i += 2;
+            tokens.push_back(make_token(TokenKind::PERCENT_EQ, line, start, i, line_num));
+            continue;
+        }
+
+        // ---- ellipsis ----
+        if (line[i] == '.' && i + 2 < len && line[i + 1] == '.' && line[i + 2] == '.') {
+            i += 3;
+            tokens.push_back(make_token(TokenKind::ELLIPSIS, line, start, i, line_num));
+            continue;
+        }
+
+        // ---- single character tokens ----
+        TokenKind single = TokenKind::UNKNOWN;
+        switch (line[i]) {
+            case '(': single = TokenKind::LPAREN;    break;
+            case ')': single = TokenKind::RPAREN;    break;
+            case '[': single = TokenKind::LSQUARE;   break;
+            case ']': single = TokenKind::RSQUARE;   break;
+            case '{': single = TokenKind::LCURLY;    break;
+            case '}': single = TokenKind::RCURLY;    break;
+            case ';': single = TokenKind::SEMICOLON; break;
+            case ':': single = TokenKind::COLON;     break;
+            case ',': single = TokenKind::COMMA;     break;
+            case '.': single = TokenKind::DOT;       break;
+            case '~': single = TokenKind::TILDE;     break;
+            case '?': single = TokenKind::QUESTION;  break;
+            case '+': single = TokenKind::PLUS;      break;
+            case '-': single = TokenKind::MINUS;     break;
+            case '*': single = TokenKind::STAR;      break;
+            case '/': single = TokenKind::SLASH;     break;
+            case '%': single = TokenKind::PERCENT;   break;
+            case '&': single = TokenKind::AMPERSAND; break;
+            case '|': single = TokenKind::PIPE;      break;
+            case '^': single = TokenKind::CARET;     break;
+            case '!': single = TokenKind::BANG;      break;
+            case '=': single = TokenKind::EQUALS;    break;
+            case '<': single = TokenKind::LT;        break;
+            case '>': single = TokenKind::GT;        break;
+            default:
+                i++;
+                tokens.push_back(make_token(TokenKind::UNKNOWN, line, start, i, line_num));
+                continue;
+        }
+        i++;
+        tokens.push_back(make_token(single, line, start, i, line_num));
     }
-    return {};
-} 
+
+    return tokens;
+}
 
 }// namespace Lexer
