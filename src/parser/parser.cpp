@@ -696,4 +696,117 @@ std::vector<Lexer::Declaration> parse(
     return declarations;
 }
 
+// ---------------------------------------------------------------------------
+// Declaration helpers
+// ---------------------------------------------------------------------------
+
+std::string declaration_kind_name(const Lexer::Declaration& decl) {
+    return std::visit([](auto&& arg) -> std::string {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, Lexer::Function>)          return "Function";
+        else if constexpr (std::is_same_v<T, Lexer::Struct>)       return "Struct";
+        else if constexpr (std::is_same_v<T, Lexer::Union>)        return "Union";
+        else if constexpr (std::is_same_v<T, Lexer::Enum>)         return "Enum";
+        else if constexpr (std::is_same_v<T, Lexer::Typedef>)      return "Typedef";
+        else if constexpr (std::is_same_v<T, Lexer::Macro>)        return "Macro";
+        else if constexpr (std::is_same_v<T, Lexer::IncludeStatement>) return "Include";
+        else if constexpr (std::is_same_v<T, Lexer::ExternVariable>)   return "ExternVariable";
+        else if constexpr (std::is_same_v<T, Lexer::VariableDefinition>) return "Variable";
+        else if constexpr (std::is_same_v<T, Lexer::ForwardDeclaration>) return "ForwardDecl";
+        return "Unknown";
+    }, decl);
+}
+
+static std::string flags_str(uint64_t flags) {
+    std::string s;
+    if (flags & Lexer::Flags::isStatic)   s += "static ";
+    if (flags & Lexer::Flags::isExtern)   s += "extern ";
+    if (flags & Lexer::Flags::isConst)    s += "const ";
+    if (flags & Lexer::Flags::isVolitile) s += "volatile ";
+    if (flags & Lexer::Flags::isSigned)   s += "signed ";
+    if (flags & Lexer::Flags::isTypedef)  s += "typedef ";
+    return s;
+}
+
+static void print_type(const Lexer::Type& t) {
+    if (t.flags) std::cout << flags_str(t.flags);
+    std::cout << t.baseType;
+    for (uint32_t i = 0; i < t.pointerLevel; i++) std::cout << "*";
+}
+
+void print_declaration(const Lexer::Declaration& decl) {
+    std::visit([](auto&& arg) {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, Lexer::Function>) {
+            print_type(arg.returnType);
+            std::cout << " " << arg.name << "(";
+            for (size_t i = 0; i < arg.params.size(); i++) {
+                if (i > 0) std::cout << ", ";
+                print_type(arg.params[i].dataType);
+                if (arg.params[i].param_name.has_value())
+                    std::cout << " " << *arg.params[i].param_name;
+            }
+            std::cout << ");" << std::endl;
+        }
+        else if constexpr (std::is_same_v<T, Lexer::Struct>) {
+            std::cout << "struct " << arg.name << " {" << std::endl;
+            for (const auto& f : arg.fields) {
+                std::cout << "  ";
+                print_type(f.type);
+                std::cout << " " << f.name << ";" << std::endl;
+            }
+            std::cout << "};" << std::endl;
+        }
+        else if constexpr (std::is_same_v<T, Lexer::Union>) {
+            std::cout << "union " << arg.name << " {" << std::endl;
+            for (const auto& f : arg.fields) {
+                std::cout << "  ";
+                print_type(f.type);
+                std::cout << " " << f.name << ";" << std::endl;
+            }
+            std::cout << "};" << std::endl;
+        }
+        else if constexpr (std::is_same_v<T, Lexer::Enum>) {
+            std::cout << "enum " << arg.name << " {" << std::endl;
+            for (const auto& f : arg.fields) {
+                std::cout << "  " << f.name;
+                if (f.value.has_value()) std::cout << " = " << *f.value;
+                std::cout << "," << std::endl;
+            }
+            std::cout << "};" << std::endl;
+        }
+        else if constexpr (std::is_same_v<T, Lexer::Typedef>) {
+            std::cout << "typedef ";
+            print_type(arg.underlyingType);
+            std::cout << " " << arg.alias << ";" << std::endl;
+        }
+        else if constexpr (std::is_same_v<T, Lexer::Macro>) {
+            std::cout << "#define " << arg.name;
+            if (arg.parameters.has_value()) std::cout << *arg.parameters;
+            std::cout << " " << arg.body << std::endl;
+        }
+        else if constexpr (std::is_same_v<T, Lexer::IncludeStatement>) {
+            std::cout << "#include " << (arg.system ? "<" : "\"")
+                      << arg.path << (arg.system ? ">" : "\"") << std::endl;
+        }
+        else if constexpr (std::is_same_v<T, Lexer::ExternVariable>) {
+            std::cout << "extern ";
+            print_type(arg.type);
+            std::cout << " " << arg.name << ";" << std::endl;
+        }
+        else if constexpr (std::is_same_v<T, Lexer::VariableDefinition>) {
+            print_type(arg.dataType);
+            std::cout << " " << arg.name;
+            if (arg.value.has_value()) std::cout << " = " << *arg.value;
+            std::cout << ";" << std::endl;
+        }
+        else if constexpr (std::is_same_v<T, Lexer::ForwardDeclaration>) {
+            const char* kw = "struct";
+            if (arg.kind == Lexer::ForwardKind::Union) kw = "union";
+            else if (arg.kind == Lexer::ForwardKind::Enum) kw = "enum";
+            std::cout << kw << " " << arg.name << ";" << std::endl;
+        }
+    }, decl);
+}
+
 } // namespace Parser
