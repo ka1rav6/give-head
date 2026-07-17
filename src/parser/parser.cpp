@@ -144,6 +144,14 @@ static Lexer::Type parse_type(Parser& p) {
         else break;
     }
 
+    // After struct/union/enum keyword, consume optional tag name
+    if ((type.baseType == "struct" || type.baseType == "union" ||
+         type.baseType == "enum") &&
+        !p.at_end() && p.peek().kind == Lexer::TokenKind::IDENTIFIER)
+    {
+        type.baseType += " " + p.advance().raw;
+    }
+
     // Plain identifier type (typedef name, user type, etc.)
     if (type.baseType.empty() && !p.at_end()
         && p.peek().kind == Lexer::TokenKind::IDENTIFIER)
@@ -187,6 +195,12 @@ static std::vector<Lexer::Parameter> parse_param_list(Parser& p) {
     }
 
     while (!p.at_end() && !p.check(Lexer::TokenKind::RPAREN)) {
+        // Handle variadic: ...
+        if (p.check(Lexer::TokenKind::ELLIPSIS)) {
+            p.advance();
+            break;
+        }
+
         Lexer::Type param_type = parse_type(p);
         std::optional<std::string> param_name;
 
@@ -347,6 +361,19 @@ static bool looks_like_forward_decl(Parser& p) {
 // Struct / Union parsing
 // ---------------------------------------------------------------------------
 
+// Skip a brace-delimited block, tracking nesting depth.
+// Expects p to be pointing AT the opening LCURLY.
+static void skip_brace_block(Parser& p) {
+    if (!p.check(Lexer::TokenKind::LCURLY))
+        return;
+    int depth = 0;
+    do {
+        if (p.check(Lexer::TokenKind::LCURLY)) depth++;
+        if (p.check(Lexer::TokenKind::RCURLY)) depth--;
+        p.advance();
+    } while (!p.at_end() && depth > 0);
+}
+
 static Lexer::Declaration parse_struct_or_union(Parser& p) {
     bool is_struct = p.check_kw("struct");
     p.advance();
@@ -361,9 +388,23 @@ static Lexer::Declaration parse_struct_or_union(Parser& p) {
         std::vector<Lexer::StructField> fields;
         while (!p.at_end() && !p.check(Lexer::TokenKind::RCURLY)) {
             Lexer::Type ft = parse_type(p);
+
+            // Handle nested anonymous struct/union: { ... } fieldname;
+            if ((ft.baseType == "struct" || ft.baseType == "union") &&
+                p.check(Lexer::TokenKind::LCURLY))
+            {
+                skip_brace_block(p);
+                ft.pointerLevel = 0;
+            }
+
             std::string fname;
             if (p.check(Lexer::TokenKind::IDENTIFIER))
                 fname = p.advance().raw;
+            // Skip bitfield width: field : 8 ;
+            if (p.match(Lexer::TokenKind::COLON)) {
+                while (!p.at_end() && !p.check(Lexer::TokenKind::SEMICOLON))
+                    p.advance();
+            }
             p.match(Lexer::TokenKind::SEMICOLON);
             fields.emplace_back(std::move(ft), std::move(fname));
         }
@@ -374,9 +415,22 @@ static Lexer::Declaration parse_struct_or_union(Parser& p) {
         std::vector<Lexer::UnionField> fields;
         while (!p.at_end() && !p.check(Lexer::TokenKind::RCURLY)) {
             Lexer::Type ft = parse_type(p);
+
+            if ((ft.baseType == "struct" || ft.baseType == "union") &&
+                p.check(Lexer::TokenKind::LCURLY))
+            {
+                skip_brace_block(p);
+                ft.pointerLevel = 0;
+            }
+
             std::string fname;
             if (p.check(Lexer::TokenKind::IDENTIFIER))
                 fname = p.advance().raw;
+            // Skip bitfield width
+            if (p.match(Lexer::TokenKind::COLON)) {
+                while (!p.at_end() && !p.check(Lexer::TokenKind::SEMICOLON))
+                    p.advance();
+            }
             p.match(Lexer::TokenKind::SEMICOLON);
             fields.emplace_back(std::move(fname), std::move(ft));
         }
@@ -451,13 +505,22 @@ static void parse_typedef(Parser& p, std::vector<Lexer::Declaration>& decls) {
     }
 
     // Anonymous struct/union with body: typedef struct { ... } Name;
+    // Also handles: typedef struct tag { ... } Name;
     if ((underlying.baseType == "struct" || underlying.baseType == "union" ||
-         underlying.baseType == "enum") &&
+         underlying.baseType == "enum" ||
+         underlying.baseType.find("struct ") == 0 ||
+         underlying.baseType.find("union ") == 0 ||
+         underlying.baseType.find("enum ") == 0) &&
         p.check(Lexer::TokenKind::LCURLY))
     {
         p.pos = saved;
 
-        if (underlying.baseType == "struct" || underlying.baseType == "union") {
+        bool is_struct_or_union =
+            underlying.baseType == "struct" || underlying.baseType == "union" ||
+            underlying.baseType.find("struct ") == 0 ||
+            underlying.baseType.find("union ") == 0;
+
+        if (is_struct_or_union) {
             decls.push_back(parse_struct_or_union(p));
             std::string alias;
             if (p.check(Lexer::TokenKind::IDENTIFIER))
@@ -501,7 +564,10 @@ static void parse_typedef(Parser& p, std::vector<Lexer::Declaration>& decls) {
 
     // Named struct/union/enum tag: typedef struct Tag Name;
     if (underlying.baseType == "struct" || underlying.baseType == "union" ||
-        underlying.baseType == "enum")
+        underlying.baseType == "enum" ||
+        underlying.baseType.find("struct ") == 0 ||
+        underlying.baseType.find("union ") == 0 ||
+        underlying.baseType.find("enum ") == 0)
     {
         std::string alias;
         if (p.check(Lexer::TokenKind::IDENTIFIER))
