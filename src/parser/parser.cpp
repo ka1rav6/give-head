@@ -119,29 +119,29 @@ static Lexer::Type parse_type(Parser& p) {
     // Consume qualifiers and storage class keywords
     while (!p.at_end() && p.peek().kind == Lexer::TokenKind::KEYWORD) {
         const std::string& w = p.peek().raw;
+
+        // Qualifiers / storage classes that set flags
         if      (w == "const")    { type.flags |= Lexer::Flags::isConst;    p.advance(); }
         else if (w == "volatile") { type.flags |= Lexer::Flags::isVolitile; p.advance(); }
         else if (w == "static")   { type.flags |= Lexer::Flags::isStatic;   p.advance(); }
         else if (w == "extern")   { type.flags |= Lexer::Flags::isExtern;   p.advance(); }
         else if (w == "signed")   { type.flags |= Lexer::Flags::isSigned;   p.advance(); }
         else if (w == "unsigned") { type.baseType += "unsigned ";            p.advance(); }
+        // Type-name keywords: int, char, void, double, float, long, short, etc.
+        else if (is_type_keyword(w)) {
+            if (!type.baseType.empty() && type.baseType.back() != ' ')
+                type.baseType += ' ';
+            type.baseType += w;
+            p.advance();
+        }
+        // struct / union / enum tags
+        else if (w == "struct" || w == "union" || w == "enum") {
+            type.baseType = w;
+            p.advance();
+            if (p.check(Lexer::TokenKind::IDENTIFIER))
+                type.baseType += " " + p.advance().raw;
+        }
         else break;
-    }
-
-    // Consume type-name identifiers (e.g. int, void, or typedef names)
-    if (!p.at_end() && p.peek().kind == Lexer::TokenKind::IDENTIFIER
-        && is_type_keyword(p.peek().raw))
-    {
-        if (!type.baseType.empty() && type.baseType.back() != ' ')
-            type.baseType += ' ';
-        type.baseType += p.advance().raw;
-    }
-
-    // Consume struct / union / enum tags
-    if (p.check_kw("struct") || p.check_kw("union") || p.check_kw("enum")) {
-        type.baseType = p.advance().raw;
-        if (p.check(Lexer::TokenKind::IDENTIFIER))
-            type.baseType += " " + p.advance().raw;
     }
 
     // Plain identifier type (typedef name, user type, etc.)
