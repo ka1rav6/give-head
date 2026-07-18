@@ -123,7 +123,7 @@ copa [-r] [--watch] <file.c | directory>
 ./build/src/copa -r --watch .        # watch entire project recursively
 ```
 
-## What's implemented in v0.1.0
+## What's implemented
 
 ### Lexer (`src/lexer/`)
 - Full C tokenization: identifiers, keywords, all operators (single/double/triple char), number literals (int, float, hex, octal, with type suffixes), string/char literals with escape handling
@@ -152,17 +152,29 @@ copa [-r] [--watch] <file.c | directory>
   - Function prototypes (bodies stripped, duplicates deduplicated)
   - Forward declarations (`struct Foo;`, etc.)
 
+### Watch mode
+- Polls directory every 500ms for `.c` file changes
+- Regenerates headers automatically on modification
+- Supports recursive watching with `-r`
+
 ## Test files
 
 The `test/` directory contains C source files and their corresponding generated headers:
 
-| Source | Generated | Contents |
-|--------|-----------|----------|
-| `test/test.c` | `test/test.h` | Includes, macros, typedef struct/enum, function pointer, extern, prototypes, forward declarations |
-| `test/test2.c` | `test/test2.h` | Multiple includes, named structs/unions/enums, multiple typedefs, extern with qualifiers |
-| `test/test_edge.c` | `test/test_edge.h` | Bitfields, variadics, self-referential structs, anonymous struct/union members |
-| `test/test_multiline.c` | `test/test_multiline.h` | Multi-line function signatures and struct definitions |
-| `test/test_selfref.c` | `test/test_selfref.h` | Self-referential struct typedef (linked list node) |
+| Source | Contents |
+|--------|----------|
+| `test/test.c` | Includes, macros, typedef struct/enum, function pointer, extern, prototypes, forward declarations |
+| `test/test2.c` | Multiple includes, named structs/unions/enums, multiple typedefs, extern with qualifiers |
+| `test/test_edge.c` | Bitfields, variadics, self-referential structs, anonymous struct/union members |
+| `test/test_multiline.c` | Multi-line function signatures and struct definitions |
+| `test/test_selfref.c` | Self-referential struct typedef (linked list node) |
+| `test/test_static.c` | `static` variables, `const`, `volatile`, `static` functions |
+| `test/test_arrays.c` | Multi-dimensional arrays, typedef'd arrays, array initializers |
+| `test/test_funcptr.c` | Function pointer typedefs, function pointer arrays |
+| `test/test_structs.c` | Packed attributes, tree nodes, deeply nested structs |
+| `test/test_preproc.c` | Token concatenation, stringification, variadic macros, `container_of` |
+| `test/test_typedefs.c` | Typedef chains, typedef'd enums, multi-field typedef'd structs |
+| `test/test_globals.c` | Extern with qualifiers, pointer-returning externs |
 
 Run all tests:
 
