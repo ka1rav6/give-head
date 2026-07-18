@@ -71,7 +71,7 @@ static int process_directory(const fs::path& dir, bool recursive) {
 
 static std::map<fs::path, fs::file_time_type> scan_files(const fs::path& dir, bool recursive) {
     std::map<fs::path, fs::file_time_type> timestamps;
-    auto scan = [&](const fs::directory_iterator& it) {
+    auto scan = [&](auto it) {
         for (const auto& entry : it) {
             if (!entry.is_regular_file()) continue;
             if (!is_c_file(entry.path())) continue;
@@ -151,7 +151,16 @@ int main(int argc, char* argv[]) {
     }
 
     if (fs::is_directory(targetPath)) {
+        if (watch) {
+            watch_directory(targetPath, recursive);
+            return 0;
+        }
         return process_directory(targetPath, recursive);
+    }
+
+    if (watch) {
+        std::cerr << "Error: --watch requires a directory, not a file" << std::endl;
+        return 1;
     }
 
     return process_file(target);
