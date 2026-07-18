@@ -1,18 +1,74 @@
 # copa
 
-A C header file generator that parses C source files and generates clean, ready-to-use header files with include guards.
+A C header file generator that parses `.c` source files and generates clean, ready-to-use `.h` header files with include guards.
+
+**Version: 0.1.0**
+
+## Example
+
+Given this C source file:
+
+```c
+// foo.c
+#include <stdio.h>
+
+#define MAX_SIZE 1024
+#define SQUARE(x) ((x) * (x))
+
+typedef struct {
+    int x;
+    int y;
+} Point;
+
+typedef void (*callback_t)(int, const char*);
+
+extern int global_var;
+
+int add(int a, int b);
+int* get_pointer(const char* name);
+```
+
+Running `copa foo.c` produces `foo.h`:
+
+```c
+/* This header is generated using copa
+*  (https://github.com/ka1rav6/copa)
+*/
+
+#ifndef FOO_H
+#define FOO_H
+
+#include <stdio.h>
+
+#define MAX_SIZE 1024
+#define SQUARE(x) ((x) * (x))
+
+typedef struct {
+    int x;
+    int y;
+} Point;
+
+typedef void (*callback_t)(int, const char*);
+
+extern int global_var;
+
+int add(int a, int b);
+
+int* get_pointer(const char* name);
+
+#endif /* FOO_H */
+```
+
+Function bodies are stripped to prototypes. Duplicates (prototype + definition of the same function) are deduplicated. Anonymous `typedef struct { ... } Name;` patterns are correctly combined.
 
 ## How it works
 
 copa processes a `.c` file through a 4-stage pipeline:
 
-1. **Lexer** -- Reads the source file and tokenizes it into a stream of tokens (identifiers, keywords, operators, literals, preprocessor directives, etc.)
+1. **Lexer** -- Tokenizes the source into a stream of tokens (identifiers, keywords, operators, literals, preprocessor directives, etc.)
 2. **Flattener** -- Merges per-line token vectors into a single stream, stripping comments and newlines.
-3. **Parser** -- Parses the token stream into an AST of top-level declarations (functions, structs, unions, enums, typedefs, macros, includes, extern variables, forward declarations, function pointers).
-4. **Generator** -- Walks the AST and emits a valid `.h` header file with:
-   - A header comment crediting copa
-   - Include guards (derived from the filename)
-   - All declarations converted to header-appropriate form (function bodies stripped to prototypes, duplicates removed)
+3. **Parser** -- Parses tokens into an AST of top-level declarations (functions, structs, unions, enums, typedefs, macros, includes, extern variables, forward declarations, function pointers).
+4. **Generator** -- Walks the AST and emits a `.h` header file with include guards and all declarations converted to header-appropriate form.
 
 ## Building
 
@@ -25,7 +81,7 @@ cmake --build build
 
 The executable is at `build/src/copa`.
 
-Debug builds include verbose logging output. To build without logs:
+### Release build (no debug logs)
 
 ```bash
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
@@ -34,34 +90,37 @@ cmake --build build
 
 ## Usage
 
-```bash
+```
 copa [-r] <file.c | directory>
 ```
 
-**Single file** -- generates the header in the same directory as the source file:
+| Command | Description |
+|---------|-------------|
+| `copa src/foo.c` | Generate `src/foo.h` from `src/foo.c` |
+| `copa src/` | Generate headers for all `.c` files in `src/` |
+| `copa -r src/` | Generate headers for all `.c` files in `src/` and subdirectories |
+
+- Headers are generated in the **same directory** as the source file.
+- Non-`.c` files are automatically skipped.
+- Existing headers are overwritten.
+
+### Examples
 
 ```bash
-./build/src/copa src/foo.c   # produces src/foo.h
+# Single file
+./build/src/copa src/main.c          # produces src/main.h
+
+# All .c files in a directory
+./build/src/copa src/                # produces src/*.h
+
+# Recursive
+./build/src/copa -r project/         # all .c files in project/ and subdirs
 ```
 
-**Directory** -- generates headers for all `.c` files in the directory (non-recursive):
-
-```bash
-./build/src/copa src/        # produces src/*.h for each .c file
-```
-
-**Recursive** -- generates headers for all `.c` files in the directory and subdirectories:
-
-```bash
-./build/src/copa -r src/     # processes src/ and all subdirectories
-```
-
-Non-`.c` files are automatically skipped. If a header already exists it is overwritten.
-
-## What's implemented
+## What's implemented in v0.1.0
 
 ### Lexer (`src/lexer/`)
-- Full C tokenization: identifiers, keywords, all operators (single/double/triple char), number literals (int, float, hex, octal, with suffixes), string/char literals with escape handling
+- Full C tokenization: identifiers, keywords, all operators (single/double/triple char), number literals (int, float, hex, octal, with type suffixes), string/char literals with escape handling
 - Preprocessor directives (consumed as single tokens)
 - Single-line (`//`) and block (`/* */`) comments
 
@@ -70,18 +129,18 @@ Non-`.c` files are automatically skipped. If a header already exists it is overw
 - Function declarations and definitions (parameters, variadics, `(void)` handling)
 - Struct, union, enum definitions with named and anonymous fields
 - Typedefs: scalar, struct, enum, function pointers
-- Preprocessor directives: `#include` (system and local), `#define` (simple and function-like)
+- Preprocessor directives: `#include` (system `<...>` and local `"..."`), `#define` (simple and function-like)
 - Extern variables and forward declarations
 - Multi-line declarations
 - Error recovery (skips to next semicolon on parse failure)
 
 ### Header Generator (`src/generator/`)
 - Include guards derived from output filename
-- Outputs all relevant declarations for a header:
-  - `#include` directives (system `<...>` and local `"..."`)
-  - `#define` macros (with and without parameters)
+- All relevant declarations emitted for a header:
+  - `#include` directives (system and local)
+  - `#define` macros (simple and function-like)
   - Struct, union, enum definitions with full field bodies
-  - Anonymous `typedef struct/union/enum { ... } Name;` emitted as combined declarations
+  - Anonymous `typedef struct/union/enum { ... } Name;` combined into single declarations
   - Function pointer typedefs
   - Extern variable declarations
   - Function prototypes (bodies stripped, duplicates deduplicated)
@@ -89,18 +148,22 @@ Non-`.c` files are automatically skipped. If a header already exists it is overw
 
 ## Test files
 
-| File | Contents |
-|------|----------|
-| `test/test.c` | Basic: includes, macros, typedef struct/enum, function pointer, extern, prototypes, forward decl, function definitions |
-| `test/test2.c` | Extended: multiple includes, named structs/unions/enums, multiple typedefs, function pointer typedefs, extern with qualifiers |
-| `test/test_edge.c` | Edge cases: bitfields, variadics, self-referential structs, anonymous struct/union members |
-| `test/test_multiline.c` | Multi-line function signatures and struct definitions |
-| `test/test_selfref.c` | Self-referential struct typedef (linked list node) |
+The `test/` directory contains C source files and their corresponding generated headers:
 
-Run any test with:
+| Source | Generated | Contents |
+|--------|-----------|----------|
+| `test/test.c` | `test/test.h` | Includes, macros, typedef struct/enum, function pointer, extern, prototypes, forward declarations |
+| `test/test2.c` | `test/test2.h` | Multiple includes, named structs/unions/enums, multiple typedefs, extern with qualifiers |
+| `test/test_edge.c` | `test/test_edge.h` | Bitfields, variadics, self-referential structs, anonymous struct/union members |
+| `test/test_multiline.c` | `test/test_multiline.h` | Multi-line function signatures and struct definitions |
+| `test/test_selfref.c` | `test/test_selfref.h` | Self-referential struct typedef (linked list node) |
+
+Run all tests:
 
 ```bash
-./build/src/copa test/test.c      # produces test/test.h
-./build/src/copa test/            # all .c files in test/
-./build/src/copa -r test/         # all .c files recursively (same here, no subdirs)
+./build/src/copa -r test/
 ```
+
+## License
+
+BSD 2-Clause License. See [LICENSE](LICENSE).

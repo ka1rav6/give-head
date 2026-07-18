@@ -20,6 +20,8 @@
 - [x] Include guards
 - [x] Deduplicate function declarations (prototype + definition)
 - [x] Combine anonymous typedef struct/union/enum
+- [x] CLI: single file, directory, and recursive (-r) modes
+- [x] Generate headers in same directory as source
 
 ## COOL FEATURES PLANNED
 - [ ] pragma once
@@ -31,5 +33,4 @@
 - [ ] generate UML
 - [ ] color diagnostics
 - [ ] watch mode
-- [ ] recursive directory scanning
 - [ ] parallel parsing
