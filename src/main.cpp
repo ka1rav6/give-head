@@ -5,6 +5,9 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <thread>
+#include <chrono>
+#include <map>
 
 namespace fs = std::filesystem;
 
@@ -64,6 +67,47 @@ static int process_directory(const fs::path& dir, bool recursive) {
         }
     }
     return exit_code;
+}
+
+static std::map<fs::path, fs::file_time_type> scan_files(const fs::path& dir, bool recursive) {
+    std::map<fs::path, fs::file_time_type> timestamps;
+    auto scan = [&](const fs::directory_iterator& it) {
+        for (const auto& entry : it) {
+            if (!entry.is_regular_file()) continue;
+            if (!is_c_file(entry.path())) continue;
+            timestamps[entry.path()] = entry.last_write_time();
+        }
+    };
+    if (recursive) {
+        scan(fs::recursive_directory_iterator(dir));
+    } else {
+        scan(fs::directory_iterator(dir));
+    }
+    return timestamps;
+}
+
+static void watch_directory(const fs::path& dir, bool recursive) {
+    std::cerr << "Watching " << dir.string() << " for changes (Ctrl+C to stop)..." << std::endl;
+
+    auto prev = scan_files(dir, recursive);
+    for (const auto& [path, _] : prev) {
+        process_file(path.string());
+    }
+
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        auto curr = scan_files(dir, recursive);
+
+        for (const auto& [path, mtime] : curr) {
+            auto it = prev.find(path);
+            if (it == prev.end() || it->second != mtime) {
+                std::cerr << "Changed: " << path.string() << std::endl;
+                process_file(path.string());
+            }
+        }
+
+        prev = std::move(curr);
+    }
 }
 
 static void print_usage() {
