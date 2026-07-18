@@ -2,9 +2,13 @@ add_library(lexer
     lexer/lexer.cpp
 )
 
-# Stubs — currently empty files, will be filled in later
 add_library(generator
     generator/generator.cpp
+)
+
+target_include_directories(generator
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/lexer
 )
 
 add_library(parser
