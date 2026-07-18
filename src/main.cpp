@@ -4,14 +4,17 @@
 #include <iostream>
 
 static std::string derive_header_path(const std::string& filePath) {
-    std::string baseName = filePath;
-    auto slashPos = baseName.find_last_of('/');
-    if (slashPos != std::string::npos)
-        baseName = baseName.substr(slashPos + 1);
+    auto lastSlash = filePath.find_last_of('/');
+    std::string dir = (lastSlash != std::string::npos)
+        ? filePath.substr(0, lastSlash + 1)
+        : "";
+    std::string baseName = (lastSlash != std::string::npos)
+        ? filePath.substr(lastSlash + 1)
+        : filePath;
     auto dotPos = baseName.find_last_of('.');
     if (dotPos != std::string::npos)
         baseName = baseName.substr(0, dotPos);
-    return baseName + ".h";
+    return dir + baseName + ".h";
 }
 
 int main(int argc, char* argv[]) {
