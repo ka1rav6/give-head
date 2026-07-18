@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <set>
 
 namespace Generator {
 
@@ -37,6 +38,45 @@ static void write_params(std::ostream& out, const std::vector<Lexer::Parameter>&
     }
 }
 
+static void write_struct_body(std::ostream& out, const std::string& name,
+                               const std::vector<Lexer::StructField>& fields,
+                               const std::string& indent) {
+    out << indent << "struct " << name << " {\n";
+    for (const auto& f : fields) {
+        out << indent << "    ";
+        write_type(out, f.type);
+        out << " " << f.name << ";\n";
+    }
+    out << indent << "};\n";
+}
+
+static void write_union_body(std::ostream& out, const std::string& name,
+                              const std::vector<Lexer::UnionField>& fields,
+                              const std::string& indent) {
+    out << indent << "union " << name << " {\n";
+    for (const auto& f : fields) {
+        out << indent << "    ";
+        write_type(out, f.type);
+        out << " " << f.name << ";\n";
+    }
+    out << indent << "};\n";
+}
+
+static void write_enum_body(std::ostream& out, const std::string& name,
+                             const std::vector<Lexer::EnumField>& fields,
+                             const std::string& indent) {
+    out << indent << "enum " << name << " {\n";
+    for (size_t i = 0; i < fields.size(); i++) {
+        out << indent << "    " << fields[i].name;
+        if (fields[i].value.has_value())
+            out << " = " << *fields[i].value;
+        if (i + 1 < fields.size())
+            out << ",";
+        out << "\n";
+    }
+    out << indent << "};\n";
+}
+
 static void write_declaration(
     std::ostream& out,
     const Lexer::Declaration& decl,
@@ -62,34 +102,13 @@ static void write_declaration(
             out << indent << kw << " " << arg.name << ";\n";
         }
         else if constexpr (std::is_same_v<T, Lexer::Struct>) {
-            out << indent << "struct " << arg.name << " {\n";
-            for (const auto& f : arg.fields) {
-                out << indent << "    ";
-                write_type(out, f.type);
-                out << " " << f.name << ";\n";
-            }
-            out << indent << "};\n";
+            write_struct_body(out, arg.name, arg.fields, indent);
         }
         else if constexpr (std::is_same_v<T, Lexer::Union>) {
-            out << indent << "union " << arg.name << " {\n";
-            for (const auto& f : arg.fields) {
-                out << indent << "    ";
-                write_type(out, f.type);
-                out << " " << f.name << ";\n";
-            }
-            out << indent << "};\n";
+            write_union_body(out, arg.name, arg.fields, indent);
         }
         else if constexpr (std::is_same_v<T, Lexer::Enum>) {
-            out << indent << "enum " << arg.name << " {\n";
-            for (size_t i = 0; i < arg.fields.size(); i++) {
-                out << indent << "    " << arg.fields[i].name;
-                if (arg.fields[i].value.has_value())
-                    out << " = " << *arg.fields[i].value;
-                if (i + 1 < arg.fields.size())
-                    out << ",";
-                out << "\n";
-            }
-            out << indent << "};\n";
+            write_enum_body(out, arg.name, arg.fields, indent);
         }
         else if constexpr (std::is_same_v<T, Lexer::Typedef>) {
             out << indent << "typedef ";
@@ -97,7 +116,7 @@ static void write_declaration(
             out << " " << arg.alias << ";\n";
         }
         else if constexpr (std::is_same_v<T, Lexer::ExternVariable>) {
-            out << indent << "extern ";
+            out << indent;
             write_type(out, arg.type);
             out << " " << arg.name << ";\n";
         }
@@ -153,7 +172,115 @@ void generate_header(
     out << "#ifndef " << guard << "\n";
     out << "#define " << guard << "\n\n";
 
-    for (const auto& decl : decls) {
+    std::set<std::string> emitted_functions;
+    std::set<size_t> skip;
+
+    // Mark anonymous struct/union/enum + typedef pairs for combined output
+    // Pattern: Struct{name=""} followed by Typedef{baseType="struct", alias=Name}
+    for (size_t i = 0; i + 1 < decls.size(); i++) {
+        if (std::holds_alternative<Lexer::Struct>(decls[i]) &&
+            std::holds_alternative<Lexer::Typedef>(decls[i + 1]))
+        {
+            const auto& s = std::get<Lexer::Struct>(decls[i]);
+            const auto& t = std::get<Lexer::Typedef>(decls[i + 1]);
+            if (s.name.empty() && t.underlyingType.baseType == "struct") {
+                skip.insert(i);
+            }
+        }
+        else if (std::holds_alternative<Lexer::Union>(decls[i]) &&
+                 std::holds_alternative<Lexer::Typedef>(decls[i + 1]))
+        {
+            const auto& u = std::get<Lexer::Union>(decls[i]);
+            const auto& t = std::get<Lexer::Typedef>(decls[i + 1]);
+            if (u.name.empty() && t.underlyingType.baseType == "union") {
+                skip.insert(i);
+            }
+        }
+        else if (std::holds_alternative<Lexer::Enum>(decls[i]) &&
+                 std::holds_alternative<Lexer::Typedef>(decls[i + 1]))
+        {
+            const auto& e = std::get<Lexer::Enum>(decls[i]);
+            const auto& t = std::get<Lexer::Typedef>(decls[i + 1]);
+            if (e.name.empty() && t.underlyingType.baseType == "enum") {
+                skip.insert(i);
+            }
+        }
+    }
+
+    for (size_t i = 0; i < decls.size(); i++) {
+        if (skip.count(i))
+            continue;
+
+        const auto& decl = decls[i];
+
+        // Combined anonymous typedef struct/union/enum
+        if (std::holds_alternative<Lexer::Typedef>(decl) &&
+            (std::get<Lexer::Typedef>(decl).underlyingType.baseType == "struct" ||
+             std::get<Lexer::Typedef>(decl).underlyingType.baseType == "union" ||
+             std::get<Lexer::Typedef>(decl).underlyingType.baseType == "enum"))
+        {
+            // Check if previous decl is the matching anonymous body
+            if (i > 0 && skip.count(i - 1)) {
+                const auto& prev = decls[i - 1];
+                const auto& td = std::get<Lexer::Typedef>(decl);
+
+                if (td.underlyingType.baseType == "struct" &&
+                    std::holds_alternative<Lexer::Struct>(prev))
+                {
+                    const auto& s = std::get<Lexer::Struct>(prev);
+                    out << "typedef struct {\n";
+                    for (const auto& f : s.fields) {
+                        out << "    ";
+                        write_type(out, f.type);
+                        out << " " << f.name << ";\n";
+                    }
+                    out << "} " << td.alias << ";\n";
+                    continue;
+                }
+                else if (td.underlyingType.baseType == "union" &&
+                         std::holds_alternative<Lexer::Union>(prev))
+                {
+                    const auto& u = std::get<Lexer::Union>(prev);
+                    out << "typedef union {\n";
+                    for (const auto& f : u.fields) {
+                        out << "    ";
+                        write_type(out, f.type);
+                        out << " " << f.name << ";\n";
+                    }
+                    out << "} " << td.alias << ";\n";
+                    continue;
+                }
+                else if (td.underlyingType.baseType == "enum" &&
+                         std::holds_alternative<Lexer::Enum>(prev))
+                {
+                    const auto& e = std::get<Lexer::Enum>(prev);
+                    out << "typedef enum {\n";
+                    for (size_t j = 0; j < e.fields.size(); j++) {
+                        out << "    " << e.fields[j].name;
+                        if (e.fields[j].value.has_value())
+                            out << " = " << *e.fields[j].value;
+                        if (j + 1 < e.fields.size())
+                            out << ",";
+                        out << "\n";
+                    }
+                    out << "} " << td.alias << ";\n";
+                    continue;
+                }
+            }
+            // Fallback: emit as regular typedef
+            write_declaration(out, decl, "");
+            out << "\n";
+            continue;
+        }
+
+        // Deduplicate function declarations (prototype + definition)
+        if (std::holds_alternative<Lexer::Function>(decl)) {
+            const auto& fn = std::get<Lexer::Function>(decl);
+            if (emitted_functions.count(fn.name))
+                continue;
+            emitted_functions.insert(fn.name);
+        }
+
         write_declaration(out, decl, "");
         out << "\n";
     }
