@@ -189,9 +189,30 @@ static Lexer::Type parse_type(Parser& p) {
     while (!type.baseType.empty() && type.baseType.back() == ' ')
         type.baseType.pop_back();
 
-    // Count pointer stars
-    while (p.match(Lexer::TokenKind::STAR))
-        type.pointerLevel++;
+    // Count pointer stars, also consuming any qualifiers that follow a
+    // star (e.g. "char* const", "int* const*"). Type only tracks a single
+    // flag set rather than per-pointer-level qualifiers, so these are
+    // folded into the same flags -- but consuming them here is essential:
+    // previously an unconsumed trailing "const" caused the caller's
+    // IDENTIFIER check to fail, which silently discarded the entire
+    // declaration (e.g. "extern const char* const program_name;").
+    while (true) {
+        if (p.match(Lexer::TokenKind::STAR)) {
+            type.pointerLevel++;
+            continue;
+        }
+        if (p.check_kw("const")) {
+            type.flags |= Lexer::Flags::isConst;
+            p.advance();
+            continue;
+        }
+        if (p.check_kw("volatile")) {
+            type.flags |= Lexer::Flags::isVolitile;
+            p.advance();
+            continue;
+        }
+        break;
+    }
 
     return type;
 }
