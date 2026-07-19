@@ -496,46 +496,168 @@ static bool looks_like_forward_decl(Parser& p) {
 
 // Skip __attribute__((...)) sequences (GCC/Clang extension).
 // Expects p to be pointing AT `__attribute__`.
-static void skip_attribute(Parser& p) {
+// Returns the raw "__attribute__((...))" text if present (and consumes
+// it), or an empty string otherwise. Previously this text was discarded
+// entirely, which for something like __attribute__((packed)) silently
+// changes the struct's layout/ABI between the .c source and the
+// generated header.
+static std::string capture_attribute(Parser& p) {
     if (p.at_end() || p.peek().raw != "__attribute__")
-        return;
-    p.advance(); // __attribute__
-    // Expect (( ... ))
+        return "";
+    std::string text = p.advance().raw; // __attribute__
     if (p.match(Lexer::TokenKind::LPAREN)) {
+        text += "(";
         int depth = 1;
         while (!p.at_end() && depth > 0) {
             if (p.check(Lexer::TokenKind::LPAREN)) depth++;
             if (p.check(Lexer::TokenKind::RPAREN)) depth--;
-            if (depth > 0) p.advance();
-            else p.advance(); // consume closing )
+            text += p.peek().raw;
+            p.advance();
         }
     }
+    return text;
 }
 
-// Skip a brace-delimited block, tracking nesting depth.
+static void skip_attribute(Parser& p) {
+    capture_attribute(p);
+}
+
+// Captures the text of a brace-delimited block (e.g. a nested anonymous
+// struct/union body) instead of discarding it, so a field like
+// "struct { size_t a; size_t b; } inner;" keeps its member list rather
+// than collapsing to "struct inner;" with the body silently dropped.
 // Expects p to be pointing AT the opening LCURLY.
-static void skip_brace_block(Parser& p) {
+static std::string capture_brace_block_text(Parser& p) {
+    std::string out = "{\n";
     if (!p.check(Lexer::TokenKind::LCURLY))
-        return;
-    int depth = 0;
-    do {
-        if (p.check(Lexer::TokenKind::LCURLY)) depth++;
-        if (p.check(Lexer::TokenKind::RCURLY)) depth--;
+        return out + "}";
+    p.advance(); // consume opening {
+    int depth = 1;
+    std::string line;
+    auto flush_line = [&]() {
+        if (!line.empty()) {
+            out += "        " + line + "\n";
+            line.clear();
+        }
+    };
+    while (!p.at_end() && depth > 0) {
+        const auto& tok = p.peek();
+        if (tok.kind == Lexer::TokenKind::LCURLY) {
+            depth++;
+            line += line.empty() ? "{" : " {";
+            p.advance();
+            continue;
+        }
+        if (tok.kind == Lexer::TokenKind::RCURLY) {
+            depth--;
+            p.advance();
+            if (depth == 0) break;
+            line += " }";
+            continue;
+        }
+        if (!line.empty() &&
+            tok.kind != Lexer::TokenKind::SEMICOLON &&
+            tok.kind != Lexer::TokenKind::COMMA)
+            line += " ";
+        line += tok.raw;
+        if (tok.kind == Lexer::TokenKind::SEMICOLON)
+            flush_line();
         p.advance();
-    } while (!p.at_end() && depth > 0);
+    }
+    flush_line();
+    out += "    }";
+    return out;
+}
+
+// Parses the declarator portion of a struct/union field -- the part
+// after the base type has already been parsed into `ft`: nested
+// anonymous struct/union bodies, function-pointer fields, plain names,
+// array dimensions, and bitfield widths. Returns the field's name
+// (which, for a function-pointer field, embeds the "(*name)(params)"
+// declarator so the generator reproduces it verbatim instead of the
+// function-pointer signature being discarded).
+static std::string parse_aggregate_field_declarator(Parser& p, Lexer::Type& ft) {
+    // Nested anonymous struct/union: struct/union { ... } [*]fieldname;
+    // Previously the body was thrown away via skip_brace_block(), turning
+    // e.g. "struct { size_t a; size_t b; } inner;" into "struct inner;"
+    // with the member list silently dropped.
+    if ((ft.baseType == "struct" || ft.baseType == "union") &&
+        p.check(Lexer::TokenKind::LCURLY))
+    {
+        ft.baseType += " " + capture_brace_block_text(p);
+        ft.pointerLevel = 0;
+        while (p.match(Lexer::TokenKind::STAR))
+            ft.pointerLevel++;
+    }
+
+    std::string fname;
+
+    // Function pointer field: RetType (*name)(params)
+    // Previously the parameter list was parsed and discarded, and the
+    // field's name/signature was lost entirely (e.g.
+    // "void (*on_event)(void* data);" became "void on_event;").
+    if (p.check(Lexer::TokenKind::LPAREN)) {
+        size_t peek1 = p.pos + 1;
+        if (peek1 < p.tokens.size() &&
+            p.tokens[peek1].kind == Lexer::TokenKind::STAR)
+        {
+            p.advance(); // (
+            p.advance(); // *
+            std::string fpName;
+            if (p.check(Lexer::TokenKind::IDENTIFIER))
+                fpName = p.advance().raw;
+            p.expect(Lexer::TokenKind::RPAREN, "expected ')'");
+            auto fparams = parse_param_list(p);
+
+            std::ostringstream oss;
+            oss << "(*" << fpName << ")(";
+            for (size_t i = 0; i < fparams.size(); i++) {
+                if (i) oss << ", ";
+                oss << fparams[i].dataType.baseType;
+                for (uint32_t s = 0; s < fparams[i].dataType.pointerLevel; s++) oss << "*";
+                if (fparams[i].param_name) oss << " " << *fparams[i].param_name;
+            }
+            oss << ")";
+            fname = oss.str();
+        }
+    }
+
+    if (fname.empty() && p.check(Lexer::TokenKind::IDENTIFIER))
+        fname = p.advance().raw;
+
+    // Array dimensions: name[size][size]... (previously a single bracket
+    // group was skipped without preserving the size at all).
+    fname += parse_array_dims(p);
+
+    // Skip bitfield width: field : 8;
+    if (p.match(Lexer::TokenKind::COLON)) {
+        while (!p.at_end() && !p.check(Lexer::TokenKind::SEMICOLON))
+            p.advance();
+    }
+
+    return fname;
 }
 
 static Lexer::Declaration parse_struct_or_union(Parser& p) {
     bool is_struct = p.check_kw("struct");
     p.advance();
 
-    skip_attribute(p);
+    std::string attr = capture_attribute(p);
 
     std::string name;
     if (p.check(Lexer::TokenKind::IDENTIFIER))
         name = p.advance().raw;
 
-    skip_attribute(p);
+    std::string trailing_attr = capture_attribute(p);
+    if (!trailing_attr.empty())
+        attr = attr.empty() ? trailing_attr : attr + " " + trailing_attr;
+
+    // Fold the attribute text into the declared name so it survives
+    // through to the generator, which prints "struct " << name << " {".
+    // This preserves e.g. "struct __attribute__((packed)) PackedHeader"
+    // without needing to plumb a new field through Struct/Union/generator.
+    if (!attr.empty())
+        name = name.empty() ? attr : attr + " " + name;
 
     LOGX_DEBUG << "    parsing " << (is_struct ? "struct" : "union") << " " << name;
     p.expect(Lexer::TokenKind::LCURLY, "expected '{'");
@@ -543,51 +665,10 @@ static Lexer::Declaration parse_struct_or_union(Parser& p) {
     if (is_struct) {
         std::vector<Lexer::StructField> fields;
         while (!p.at_end() && !p.check(Lexer::TokenKind::RCURLY)) {
+
             size_t loop_start = p.pos;
             Lexer::Type ft = parse_type(p);
-
-            // Handle nested anonymous struct/union: { ... } fieldname;
-            if ((ft.baseType == "struct" || ft.baseType == "union") &&
-                p.check(Lexer::TokenKind::LCURLY))
-            {
-                skip_brace_block(p);
-                ft.pointerLevel = 0;
-            }
-
-            std::string fname;
-
-            // Function pointer field: (*name)(params)
-            if (p.check(Lexer::TokenKind::LPAREN)) {
-                size_t peek1 = p.pos + 1;
-                if (peek1 < p.tokens.size() &&
-                    p.tokens[peek1].kind == Lexer::TokenKind::STAR)
-                {
-                    p.advance(); // (
-                    p.advance(); // *
-                    if (p.check(Lexer::TokenKind::IDENTIFIER))
-                        fname = p.advance().raw;
-                    p.match(Lexer::TokenKind::RPAREN);
-                    if (p.check(Lexer::TokenKind::LPAREN))
-                        parse_param_list(p);
-                }
-            }
-
-            if (fname.empty() && p.check(Lexer::TokenKind::IDENTIFIER))
-                fname = p.advance().raw;
-
-            // Skip array brackets: name[size]
-            if (p.check(Lexer::TokenKind::LSQUARE)) {
-                p.advance();
-                while (!p.at_end() && !p.check(Lexer::TokenKind::RSQUARE))
-                    p.advance();
-                p.match(Lexer::TokenKind::RSQUARE);
-            }
-
-            // Skip bitfield width: field : 8 ;
-            if (p.match(Lexer::TokenKind::COLON)) {
-                while (!p.at_end() && !p.check(Lexer::TokenKind::SEMICOLON))
-                    p.advance();
-            }
+            std::string fname = parse_aggregate_field_declarator(p, ft);
             p.match(Lexer::TokenKind::SEMICOLON);
             fields.emplace_back(std::move(ft), std::move(fname));
 
@@ -601,48 +682,7 @@ static Lexer::Declaration parse_struct_or_union(Parser& p) {
         while (!p.at_end() && !p.check(Lexer::TokenKind::RCURLY)) {
             size_t loop_start = p.pos;
             Lexer::Type ft = parse_type(p);
-
-            if ((ft.baseType == "struct" || ft.baseType == "union") &&
-                p.check(Lexer::TokenKind::LCURLY))
-            {
-                skip_brace_block(p);
-                ft.pointerLevel = 0;
-            }
-
-            std::string fname;
-
-            // Function pointer field: (*name)(params)
-            if (p.check(Lexer::TokenKind::LPAREN)) {
-                size_t peek1 = p.pos + 1;
-                if (peek1 < p.tokens.size() &&
-                    p.tokens[peek1].kind == Lexer::TokenKind::STAR)
-                {
-                    p.advance(); // (
-                    p.advance(); // *
-                    if (p.check(Lexer::TokenKind::IDENTIFIER))
-                        fname = p.advance().raw;
-                    p.match(Lexer::TokenKind::RPAREN);
-                    if (p.check(Lexer::TokenKind::LPAREN))
-                        parse_param_list(p);
-                }
-            }
-
-            if (fname.empty() && p.check(Lexer::TokenKind::IDENTIFIER))
-                fname = p.advance().raw;
-
-            // Skip array brackets: name[size]
-            if (p.check(Lexer::TokenKind::LSQUARE)) {
-                p.advance();
-                while (!p.at_end() && !p.check(Lexer::TokenKind::RSQUARE))
-                    p.advance();
-                p.match(Lexer::TokenKind::RSQUARE);
-            }
-
-            // Skip bitfield width
-            if (p.match(Lexer::TokenKind::COLON)) {
-                while (!p.at_end() && !p.check(Lexer::TokenKind::SEMICOLON))
-                    p.advance();
-            }
+            std::string fname = parse_aggregate_field_declarator(p, ft);
             p.match(Lexer::TokenKind::SEMICOLON);
             fields.emplace_back(std::move(fname), std::move(ft));
 
