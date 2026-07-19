@@ -786,13 +786,12 @@ static Lexer::Declaration parse_variable(Parser& p, Lexer::Type type, std::strin
     LOGX_DEBUG << "      parse_variable: " << type.baseType << " " << name;
 
     // Array: type name[expr]
-    if (p.check(Lexer::TokenKind::LSQUARE)) {
-        p.advance();
-        parse_expression(p); // size
-        p.expect(Lexer::TokenKind::RSQUARE, "expected ']'");
-        type.pointerLevel++;
-        LOGX_DEBUG << "      parse_variable: array, pointerLevel=" << type.pointerLevel;
-    }
+    // Previously this incremented pointerLevel and threw away the size,
+    // turning e.g. "int lookup_table[16] = {...};" into the invalid
+    // "int* lookup_table = {...};" (a brace-init list isn't a valid
+    // initializer for a scalar pointer). Preserve the array declarator
+    // on the name instead.
+    name += parse_array_dims(p);
 
     // Optional initializer
     if (p.match(Lexer::TokenKind::EQUALS)) {
