@@ -99,6 +99,7 @@ struct Parser {
 static Lexer::Type parse_type(Parser& p);
 static std::vector<Lexer::Parameter> parse_param_list(Parser& p);
 static std::string parse_expression(Parser& p);
+static std::string parse_array_dims(Parser& p);
 static void parse_typedef(Parser& p, std::vector<Lexer::Declaration>& decls);
 
 // ---------------------------------------------------------------------------
@@ -253,21 +254,68 @@ static std::vector<Lexer::Parameter> parse_param_list(Parser& p) {
 
         Lexer::Type param_type = parse_type(p);
         std::optional<std::string> param_name;
+        bool handled = false;
 
-        if (p.check(Lexer::TokenKind::IDENTIFIER))
-            param_name = p.advance().raw;
+        // Function pointer parameter: RetType (*name)(params)
+        // e.g. void register_callback(int id, void (*cb)(void));
+        if (p.check(Lexer::TokenKind::LPAREN)) {
+            size_t afterParen = p.pos + 1;
+            if (afterParen < p.tokens.size() &&
+                p.tokens[afterParen].kind == Lexer::TokenKind::STAR)
+            {
+                size_t afterStar = afterParen + 1;
+                size_t afterName = afterStar;
+                if (afterName < p.tokens.size() &&
+                    p.tokens[afterName].kind == Lexer::TokenKind::IDENTIFIER)
+                    afterName++;
+                if (afterName < p.tokens.size() &&
+                    p.tokens[afterName].kind == Lexer::TokenKind::RPAREN)
+                {
+                    p.advance(); // (
+                    p.advance(); // *
+                    std::string fpName;
+                    if (p.check(Lexer::TokenKind::IDENTIFIER))
+                        fpName = p.advance().raw;
+                    p.expect(Lexer::TokenKind::RPAREN, "expected ')'");
+                    auto fparams = parse_param_list(p);
 
-        // Array parameter: name[] → pointer
-        if (p.match(Lexer::TokenKind::LSQUARE)) {
-            while (!p.check(Lexer::TokenKind::RSQUARE) && !p.at_end())
-                p.advance();
-            p.expect(Lexer::TokenKind::RSQUARE, "expected ']'");
-            param_type.pointerLevel++;
+                    std::ostringstream oss;
+                    oss << param_type.baseType;
+                    for (uint32_t s = 0; s < param_type.pointerLevel; s++) oss << "*";
+                    oss << " (*" << fpName << ")(";
+                    for (size_t i = 0; i < fparams.size(); i++) {
+                        if (i) oss << ", ";
+                        oss << fparams[i].dataType.baseType;
+                        for (uint32_t s = 0; s < fparams[i].dataType.pointerLevel; s++) oss << "*";
+                        if (fparams[i].param_name) oss << " " << *fparams[i].param_name;
+                    }
+                    oss << ")";
+
+                    LOGX_DEBUG << "        parse_param_list: function-pointer param -> " << oss.str();
+                    params.emplace_back(Lexer::Type{oss.str(), 0, 0}, std::nullopt);
+                    handled = true;
+                }
+            }
         }
 
-        LOGX_DEBUG << "        parse_param_list: param " << params.size() << " = "
-                   << param_type.baseType << (param_name ? " " + *param_name : " (unnamed)");
-        params.emplace_back(std::move(param_type), std::move(param_name));
+        if (!handled) {
+            if (p.check(Lexer::TokenKind::IDENTIFIER))
+                param_name = p.advance().raw;
+
+            // Array parameter: name[] or name[][3] etc. Arrays decay to
+            // pointers as function parameters, but reproducing the original
+            // bracket syntax (rather than collapsing to a bare pointer) keeps
+            // multi-dimensional array parameters like "int rows[][3]" valid
+            // -- a single bracket-skip previously left the second "[3]"
+            // unconsumed, which broke parsing of the rest of the signature.
+            std::string dims = parse_array_dims(p);
+            if (!dims.empty())
+                param_name = param_name.value_or("") + dims;
+
+            LOGX_DEBUG << "        parse_param_list: param " << params.size() << " = "
+                       << param_type.baseType << (param_name ? " " + *param_name : " (unnamed)");
+            params.emplace_back(std::move(param_type), std::move(param_name));
+        }
 
         if (!p.match(Lexer::TokenKind::COMMA))
             break;
