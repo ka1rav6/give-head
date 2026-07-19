@@ -924,8 +924,9 @@ static void parse_top_level(Parser& p, std::vector<Lexer::Declaration>& decls) {
         if (p.check(Lexer::TokenKind::IDENTIFIER)) {
             std::string name = p.advance().raw;
 
-            if (type.flags & Lexer::Flags::isExtern) {
+            if (type.flags & Lexer::Flags::isExtern && !p.check(Lexer::TokenKind::LPAREN)) {
                 LOGX_DEBUG << "  parsing EXTERN_VARIABLE: " << name;
+                name += parse_array_dims(p);
                 p.match(Lexer::TokenKind::SEMICOLON);
                 decls.push_back(Lexer::ExternVariable(std::move(type), std::move(name)));
                 return;
