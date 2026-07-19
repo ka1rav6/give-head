@@ -226,13 +226,17 @@ static std::vector<Lexer::Parameter> parse_param_list(Parser& p) {
     p.expect(Lexer::TokenKind::LPAREN, "expected '('");
     LOGX_DEBUG << "        parse_param_list: entered";
 
-    // (void) means empty parameter list
+    // (void) means an explicit empty parameter list. This is kept distinct
+    // from a bare "()" (which in a C declaration means "unspecified
+    // parameters", not "zero parameters") by recording a single "void"
+    // parameter, which write_params() renders back out as literal "void".
     if (p.check_kw("void")) {
         size_t saved = p.pos;
         p.advance();
         if (p.check(Lexer::TokenKind::RPAREN)) {
-            LOGX_DEBUG << "        parse_param_list: (void) -> 0 params";
+            LOGX_DEBUG << "        parse_param_list: (void) -> explicit void";
             p.advance();
+            params.emplace_back(Lexer::Type{"void", 0, 0}, std::nullopt);
             return params;
         }
         p.pos = saved;
