@@ -16,13 +16,19 @@ namespace fs = std::filesystem;
 static std::string derive_header_path(const std::string& filePath, const std::string& outputDir = "") {
     std::string baseName;
     auto lastSlash = filePath.find_last_of('/');
+    std::string sourceDir = (lastSlash != std::string::npos)
+        ? filePath.substr(0, lastSlash + 1)
+        : "";
     baseName = (lastSlash != std::string::npos)
         ? filePath.substr(lastSlash + 1)
         : filePath;
     auto dotPos = baseName.find_last_of('.');
     if (dotPos != std::string::npos)
         baseName = baseName.substr(0, dotPos);
-    std::string dir = outputDir;
+    // Default to the source file's own directory (matches the documented
+    // --target default of "same as source"); only override it when the
+    // caller explicitly passed an output directory.
+    std::string dir = outputDir.empty() ? sourceDir : outputDir;
     if (!dir.empty() && dir.back() != '/')
         dir += '/';
     return dir + baseName + ".h";
