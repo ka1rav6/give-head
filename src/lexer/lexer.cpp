@@ -21,6 +21,26 @@ std::vector<std::string> read_file(const std::string& fileName) {
         lines.push_back(line);
     }
     LOGX_DEBUG << "read " << lines.size() << " lines from " << fileName;
+
+    // Splice backslash-newline line continuations (C translation phase 2)
+    // into a single logical line before tokenizing, e.g.:
+    //   #define container_of(ptr, type, member) \
+    //       ((type*)((char*)(ptr) - offsetof(type, member)))
+    // Without this, the trailing '\' lexed as an UNKNOWN token and the
+    // rest of the macro definition was truncated. Continuation lines are
+    // merged forward and left as empty placeholders so every other
+    // line's number stays accurate for diagnostics.
+    for (size_t idx = 0; idx < lines.size(); idx++) {
+        size_t end = lines[idx].find_last_not_of(" \t\r");
+        size_t next = idx + 1;
+        while (end != std::string::npos && lines[idx][end] == '\\' && next < lines.size()) {
+            lines[idx] = lines[idx].substr(0, end) + " " + lines[next];
+            lines[next].clear();
+            next++;
+            end = lines[idx].find_last_not_of(" \t\r");
+        }
+    }
+
     return lines;
 }
 
